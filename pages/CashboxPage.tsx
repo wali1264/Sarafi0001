@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useLayoutEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { createRoot } from 'react-dom/client';
 import { useApi } from '../hooks/useApi';
 import { CashboxRequest, CashboxBalance, CashboxRequestStatus, ResolveCashboxRequestPayload, User, Currency } from '../types';
 import { useAuth } from '../contexts/AuthContext';
@@ -135,12 +134,16 @@ const CashboxPage: React.FC = () => {
     const handleConfirmPrint = (request: CashboxRequest, printNote: string) => {
         const container = document.getElementById('printable-area-container');
         if (container) {
-            const root = createRoot(container);
-            root.render(<PrintableView request={request} printNote={printNote} />);
-            setTimeout(() => {
-                window.print();
-                root.unmount();
-            }, 100);
+            ReactDOM.render(
+                <PrintableView request={request} printNote={printNote} />,
+                container,
+                () => {
+                    setTimeout(() => {
+                        window.print();
+                        ReactDOM.unmountComponentAtNode(container);
+                    }, 100);
+                }
+            );
         }
         setIsPrintModalOpen(false);
         setSelectedRequestForPrint(null);

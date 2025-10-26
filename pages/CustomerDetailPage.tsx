@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactDOM from 'react-dom';
-import { createRoot } from 'react-dom/client';
 import { useApi } from '../hooks/useApi';
 import { Customer, CustomerTransaction, Currency, User, InternalExchange } from '../types';
 import { CURRENCIES } from '../constants';
@@ -22,14 +21,16 @@ const StatementPrintPreviewModal: React.FC<StatementPrintPreviewModalProps> = ({
     const handlePrint = () => {
         const container = document.getElementById('printable-area-container');
         if (container) {
-            const root = createRoot(container);
-            root.render(
-                <StatementPrintView entityId={customerId} type="customer" />
+            ReactDOM.render(
+                <StatementPrintView entityId={customerId} type="customer" />,
+                container,
+                () => {
+                    setTimeout(() => {
+                        window.print();
+                        ReactDOM.unmountComponentAtNode(container);
+                    }, 100);
+                }
             );
-            setTimeout(() => {
-                window.print();
-                root.unmount();
-            }, 100);
         }
         onClose();
     };

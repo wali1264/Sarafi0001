@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import ReactDOM from 'react-dom';
-import { createRoot } from 'react-dom/client';
 import { useApi } from '../hooks/useApi';
 import { DomesticTransfer, TransferStatus, User, Currency, PartnerAccount } from '../types';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,14 +26,16 @@ const TransferPrintPreviewModal: React.FC<TransferPrintPreviewModalProps> = ({ i
     const handlePrint = () => {
         const container = document.getElementById('printable-area-container');
         if (container) {
-            const root = createRoot(container);
-            root.render(
-                <TransferPrintView transfer={transfer} partnerProvince={partnerProvince} />
+            ReactDOM.render(
+                <TransferPrintView transfer={transfer} partnerProvince={partnerProvince} />,
+                container,
+                () => {
+                    setTimeout(() => {
+                        window.print();
+                        ReactDOM.unmountComponentAtNode(container);
+                    }, 100);
+                }
             );
-            setTimeout(() => {
-                window.print();
-                root.unmount();
-            }, 100);
         }
         onClose();
     };

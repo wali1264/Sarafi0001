@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react';
 import ReactDOM from 'react-dom';
-import { createRoot } from 'react-dom/client';
 import { 
     CashboxRequest, 
     DomesticTransfer, 
@@ -233,14 +232,16 @@ const ReportPrintPreviewModal: React.FC<ReportPrintPreviewModalProps> = ({ isOpe
     const handlePrint = () => {
         const container = document.getElementById('printable-area-container');
         if (container) {
-            const root = createRoot(container);
-            root.render(
-                <ReportPrintView headers={headers} rows={rows} summary={summary} />
+            ReactDOM.render(
+                <ReportPrintView headers={headers} rows={rows} summary={summary} />,
+                container,
+                () => {
+                    setTimeout(() => {
+                        window.print();
+                        ReactDOM.unmountComponentAtNode(container);
+                    }, 100);
+                }
             );
-            setTimeout(() => {
-                window.print();
-                root.unmount();
-            }, 100);
         }
         onClose();
     };
