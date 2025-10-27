@@ -318,12 +318,6 @@ class SarrafiApiService {
         if (error) throw error;
         return data;
     }
-    
-    async getFullBusinessContextAsText(): Promise<string> {
-        const { data, error } = await supabase.rpc('get_full_business_context');
-        if (error) return JSON.stringify({ error: error.message });
-        return JSON.stringify(data, null, 2);
-    }
 
     async getBackupState(): Promise<any> {
         const { data, error } = await supabase.rpc('get_backup_state');

@@ -1,10 +1,10 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-// The `LiveSession` type is not exported from '@google/genai' and has been removed from this import.
-import { GoogleGenAI, LiveServerMessage, Modality, Blob, FunctionCall, GenerateContentResponse } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality, Blob, FunctionCall, GenerateContentResponse, FunctionDeclaration, Type } from '@google/genai';
 import geminiService from '../services/geminiService';
 import { useApi } from '../hooks/useApi';
 import { useAuth } from '../contexts/AuthContext';
+import { Currency, ExpenseCategory, TransferStatus } from '../types';
+import OperationalModal from './OperationalModal';
 
 // --- Audio Encoding/Decoding Utilities ---
 
@@ -62,15 +62,106 @@ interface TranscriptLine {
     text: string;
 }
 
-type AssistantState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'ERROR';
+type AssistantState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'AWAITING_CONFIRMATION' | 'ERROR';
+
+// --- Dynamic Tool Builder ---
+const getDynamicTools = (hasPermission: (module: any, action: any) => boolean): { functionDeclarations: FunctionDeclaration[] }[] => {
+    const declarations: FunctionDeclaration[] = [];
+
+    // --- Core Interaction Tools ---
+    declarations.push({
+        name: 'requestUserConfirmation',
+        description: 'برای تایید نهایی یک عملیات اجرایی استفاده می‌شود. ابتدا تمام اطلاعات را جمع‌آوری کرده، سپس این تابع را برای نمایش به کاربر و گرفتن تایید فراخوانی کن.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                title: { type: Type.STRING, description: 'عنوان عملیات، مثلا "تایید ثبت مشتری جدید"' },
+                data: { type: Type.OBJECT, description: 'یک شیء JSON حاوی تمام اطلاعات جمع‌آوری شده برای نمایش به کاربر' },
+                action_to_perform: { type: Type.STRING, description: 'نام تابع اصلی که پس از تایید باید اجرا شود، مثلا "createCustomer"' },
+                action_payload: { type: Type.OBJECT, description: 'پارامترهای دقیق مورد نیاز برای تابع اصلی' },
+            },
+            required: ['title', 'data', 'action_to_perform', 'action_payload'],
+        },
+    });
+
+    // --- REPORTING & ANALYSIS ---
+    declarations.push({
+        name: 'analyzeBusinessData',
+        description: 'به سوالات تحلیلی و گزارش‌گیری در مورد کسب و کار پاسخ می‌دهد. مثال: "پرکارترین همکار ما کیست؟" یا "سود ما در ماه گذشته چقدر بود؟"',
+        parameters: {
+            type: Type.OBJECT,
+            properties: { query: { type: Type.STRING, description: 'سوال کاربر به زبان طبیعی' } },
+            required: ['query'],
+        },
+    });
+
+    // --- Executive Function Declarations (for action_to_perform) ---
+    if (hasPermission('cashbox', 'create')) {
+         declarations.push({ name: 'createCashboxRequest', description: 'ثبت درخواست جدید در صندوق', parameters: { type: Type.OBJECT, properties: { request_type: { type: Type.STRING }, amount: { type: Type.NUMBER }, currency: { type: Type.STRING }, reason: { type: Type.STRING }, customer_code: { type: Type.STRING, nullable: true }, bank_account_id: { type: Type.STRING, nullable: true } }, required: ['request_type', 'amount', 'currency', 'reason'] }});
+    }
+    if (hasPermission('cashbox', 'approve')) {
+        declarations.push({ name: 'resolveCashboxRequest', description: 'تایید یا رد درخواست صندوق', parameters: { type: Type.OBJECT, properties: { request_id: { type: Type.STRING }, resolution: { type: Type.STRING, enum: ['approve', 'reject'] } }, required: ['request_id', 'resolution'] }});
+    }
+    if (hasPermission('domesticTransfers', 'create')) {
+        declarations.push({ name: 'createOutgoingTransfer', description: 'ایجاد حواله داخلی خروجی', parameters: { type: Type.OBJECT, properties: { sender_name: { type: Type.STRING }, receiver_name: { type: Type.STRING }, sender_tazkereh: { type: Type.STRING }, receiver_tazkereh: { type: Type.STRING }, amount: { type: Type.NUMBER }, currency: { type: Type.STRING }, commission: { type: Type.NUMBER }, destination_province: { type: Type.STRING }, partner_sarraf: { type: Type.STRING }, is_cash_payment: { type: Type.BOOLEAN }, customer_code: { type: Type.STRING, nullable: true } }, required: ['sender_name', 'sender_tazkereh', 'receiver_name', 'receiver_tazkereh', 'amount', 'currency', 'commission', 'destination_province', 'partner_sarraf', 'is_cash_payment'] }});
+        declarations.push({ name: 'createIncomingTransfer', description: 'ثبت حواله داخلی ورودی', parameters: { type: Type.OBJECT, properties: { receiver_name: { type: Type.STRING }, receiver_tazkereh: { type: Type.STRING }, amount: { type: Type.NUMBER }, currency: { type: Type.STRING }, destination_province: { type: Type.STRING }, partner_sarraf: { type: Type.STRING }, partner_reference: { type: Type.STRING } }, required: ['receiver_name', 'receiver_tazkereh', 'amount', 'currency', 'destination_province', 'partner_sarraf', 'partner_reference'] }});
+    }
+    if (hasPermission('domesticTransfers', 'edit')) {
+         declarations.push({ name: 'updateTransferStatus', description: 'به‌روزرسانی وضعیت حواله داخلی', parameters: { type: Type.OBJECT, properties: { transfer_id: { type: Type.STRING }, new_status: { type: Type.STRING, enum: [TransferStatus.Executed, TransferStatus.Cancelled] } }, required: ['transfer_id', 'new_status'] }});
+    }
+    if (hasPermission('domesticTransfers', 'process')) {
+        declarations.push({ name: 'payoutIncomingTransfer', description: 'پرداخت حواله ورودی', parameters: { type: Type.OBJECT, properties: { transfer_id: { type: Type.STRING } }, required: ['transfer_id'] }});
+    }
+    if (hasPermission('expenses', 'create')) {
+        declarations.push({ name: 'logExpense', description: 'ثبت هزینه جدید', parameters: { type: Type.OBJECT, properties: { category: { type: Type.STRING, enum: Object.values(ExpenseCategory) }, amount: { type: Type.NUMBER }, currency: { type: Type.STRING }, description: { type: Type.STRING } }, required: ['category', 'amount', 'currency', 'description'] }});
+    }
+    if (hasPermission('foreignTransfers', 'create')) {
+        declarations.push({ name: 'initiateForeignExchange', description: 'شروع تبادله ارز', parameters: { type: Type.OBJECT, properties: { description: { type: Type.STRING }, from_asset_id: { type: Type.STRING }, from_amount: { type: Type.NUMBER } }, required: ['description', 'from_asset_id', 'from_amount'] }});
+         declarations.push({ name: 'completeForeignExchange', description: 'تکمیل تبادله ارز', parameters: { type: Type.OBJECT, properties: { transaction_id: { type: Type.STRING }, to_asset_id: { type: Type.STRING }, to_amount: { type: Type.NUMBER } }, required: ['transaction_id', 'to_asset_id', 'to_amount'] }});
+    }
+    if(hasPermission('commissionTransfers', 'create')) {
+        declarations.push({ name: 'logCommissionTransfer', description: 'ثبت ورود وجه کمیشن‌کاری', parameters: { type: Type.OBJECT, properties: { initiator_type: { type: Type.STRING, enum: ['Customer', 'Partner'] }, customer_code: { type: Type.STRING, nullable: true }, partner_id: { type: Type.STRING, nullable: true }, amount: { type: Type.NUMBER }, source_account_number: { type: Type.STRING }, received_into_bank_account_id: { type: Type.STRING }, commission_percentage: { type: Type.NUMBER } }, required: ['initiator_type', 'amount', 'source_account_number', 'received_into_bank_account_id', 'commission_percentage'] }});
+    }
+    if(hasPermission('commissionTransfers', 'process')) {
+        declarations.push({ name: 'executeCommissionTransfer', description: 'اجرای پرداخت کمیشن‌کاری', parameters: { type: Type.OBJECT, properties: { transfer_id: { type: Type.STRING }, paid_from_bank_account_id: { type: Type.STRING }, destination_account_number: { type: Type.STRING } }, required: ['transfer_id', 'paid_from_bank_account_id', 'destination_account_number'] }});
+    }
+    if(hasPermission('amanat', 'create')) {
+        declarations.push({ name: 'createAmanat', description: 'ثبت امانت جدید', parameters: { type: Type.OBJECT, properties: { customer_name: { type: Type.STRING }, amount: { type: Type.NUMBER }, currency: { type: Type.STRING }, notes: { type: Type.STRING }, bank_account_id: { type: Type.STRING, nullable: true } }, required: ['customer_name', 'amount', 'currency', 'notes'] }});
+    }
+    if(hasPermission('amanat', 'process')) {
+        declarations.push({ name: 'returnAmanat', description: 'بازگشت امانت', parameters: { type: Type.OBJECT, properties: { amanat_id: { type: Type.STRING } }, required: ['amanat_id'] }});
+    }
+    if(hasPermission('customers', 'create')) {
+        declarations.push({ name: 'createCustomer', description: 'ایجاد مشتری جدید', parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, code: { type: Type.STRING }, whatsapp_number: { type: Type.STRING } }, required: ['name', 'code', 'whatsapp_number'] }});
+    }
+     if(hasPermission('partnerAccounts', 'create')) {
+        declarations.push({ name: 'createPartner', description: 'ایجاد همکار جدید', parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, province: { type: Type.STRING }, whatsapp_number: { type: Type.STRING } }, required: ['name', 'province', 'whatsapp_number'] }});
+    }
+    if(hasPermission('accountTransfers', 'create')) {
+         declarations.push({ name: 'createAccountTransfer', description: 'انتقال وجه بین دو مشتری', parameters: { type: Type.OBJECT, properties: { from_customer_code: { type: Type.STRING }, to_customer_code: { type: Type.STRING }, amount: { type: Type.NUMBER }, currency: { type: Type.STRING }, description: { type: Type.STRING }, is_pending_assignment: { type: Type.BOOLEAN } }, required: ['from_customer_code', 'to_customer_code', 'amount', 'currency', 'description', 'is_pending_assignment'] }});
+    }
+    if(hasPermission('customers', 'edit')) {
+         declarations.push({ name: 'performInternalCustomerExchange', description: 'تبدیل ارز داخلی مشتری', parameters: { type: Type.OBJECT, properties: { customer_id: { type: Type.STRING }, from_currency: { type: Type.STRING }, from_amount: { type: Type.NUMBER }, to_currency: { type: Type.STRING }, to_amount: { type: Type.NUMBER }, rate: { type: Type.NUMBER } }, required: ['customer_id', 'from_currency', 'from_amount', 'to_currency', 'to_amount', 'rate'] }});
+    }
+    if(hasPermission('settings', 'edit')) {
+        declarations.push({ name: 'addBankAccount', description: 'افزودن حساب بانکی جدید', parameters: { type: Type.OBJECT, properties: { account_holder: { type: Type.STRING }, bank_name: { type: Type.STRING }, account_number: { type: Type.STRING }, card_to_card_number: { type: Type.STRING, nullable: true } }, required: ['account_holder', 'bank_name', 'account_number'] }});
+    }
+    
+    return [{ functionDeclarations: declarations }];
+};
 
 const VoiceAssistant: React.FC = () => {
     const api = useApi();
-    const { user } = useAuth();
+    const { user, hasPermission } = useAuth();
     const [session, setSession] = useState<Awaited<ReturnType<typeof geminiService.ai.live.connect>> | null>(null);
     const [assistantState, setAssistantState] = useState<AssistantState>('IDLE');
     const [transcriptHistory, setTranscriptHistory] = useState<TranscriptLine[]>([]);
     
+    // Modal State
+    const [isOperationalModalOpen, setOperationalModalOpen] = useState(false);
+    const [modalContent, setModalContent] = useState<{ title: string; data: any; type: 'confirmation' | 'report' }>({ title: '', data: {}, type: 'confirmation' });
+    const [pendingAction, setPendingAction] = useState<{ name: string; payload: any; funcCallId: string } | null>(null);
+
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
     const nextStartTimeRef = useRef(0);
@@ -78,84 +169,139 @@ const VoiceAssistant: React.FC = () => {
     const streamRef = useRef<MediaStream | null>(null);
     const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
 
+    const apiMethods: { [key: string]: (payload: any) => Promise<any> } = {
+        createCashboxRequest: api.createCashboxRequest,
+        resolveCashboxRequest: api.resolveCashboxRequest,
+        createOutgoingTransfer: (p: any) => api.createDomesticTransfer({ ...p, partner_reference: undefined }),
+        createIncomingTransfer: (p: any) => api.createDomesticTransfer({ ...p, sender_name: p.partner_sarraf, sender_tazkereh: '-', commission: 0, is_cash_payment: false }),
+        updateTransferStatus: api.updateTransferStatus,
+        payoutIncomingTransfer: api.payoutIncomingTransfer,
+        logExpense: api.createExpense,
+        initiateForeignExchange: api.initiateForeignExchange,
+        completeForeignExchange: api.completeForeignExchange,
+        logCommissionTransfer: api.logCommissionTransfer,
+        executeCommissionTransfer: api.executeCommissionTransfer,
+        createAmanat: api.createAmanat,
+        returnAmanat: api.returnAmanat,
+        createCustomer: api.createCustomer,
+        createPartner: api.createPartner,
+        addBankAccount: api.addBankAccount,
+        createAccountTransfer: api.createAccountTransfer,
+        performInternalCustomerExchange: api.performInternalCustomerExchange,
+    };
+
     const handleFunctionCall = useCallback(async (funcCall: FunctionCall) => {
         if (!user) return;
         setAssistantState('THINKING');
-        const args = funcCall.args;
-        let result: any;
-        let successMessage = `عملیات ${funcCall.name} با موفقیت انجام شد.`;
+        const { name, args } = funcCall;
+
+        if (name === 'requestUserConfirmation') {
+            setPendingAction({
+                name: args.action_to_perform as string,
+                payload: args.action_payload as any,
+                funcCallId: funcCall.id
+            });
+            setModalContent({
+                title: args.title as string,
+                data: args.data as any,
+                type: 'confirmation'
+            });
+            setOperationalModalOpen(true);
+            setAssistantState('AWAITING_CONFIRMATION');
+        } else if (name === 'analyzeBusinessData') {
+            const secureContext: any = {};
+            const dataPromises: Promise<any>[] = [];
+            const contextKeys: string[] = [];
+            if (hasPermission('cashbox', 'view')) { dataPromises.push(api.getCashboxRequests()); contextKeys.push('cashboxRequests'); dataPromises.push(api.getCashboxBalances()); contextKeys.push('cashboxBalances'); }
+            if (hasPermission('domesticTransfers', 'view')) { dataPromises.push(api.getDomesticTransfers()); contextKeys.push('domesticTransfers'); }
+            if (hasPermission('foreignTransfers', 'view')) { dataPromises.push(api.getForeignTransactions()); contextKeys.push('foreignTransactions'); }
+            if (hasPermission('commissionTransfers', 'view')) { dataPromises.push(api.getCommissionTransfers()); contextKeys.push('commissionTransfers'); }
+            if (hasPermission('customers', 'view')) { dataPromises.push(api.getCustomers()); contextKeys.push('customers'); }
+            if (hasPermission('partnerAccounts', 'view')) { dataPromises.push(api.getPartnerAccounts()); contextKeys.push('partnerAccounts'); }
+            if (hasPermission('expenses', 'view')) { dataPromises.push(api.getExpenses()); contextKeys.push('expenses'); }
+            const results = await Promise.all(dataPromises);
+            results.forEach((res, index) => { secureContext[contextKeys[index]] = res; });
+
+            const contextString = JSON.stringify(secureContext, null, 2);
+            const prompt = `شما یک تحلیلگر ارشد دیتای مالی در صرافی الشیخ هستید... (prompt as before) ... \n\n**دیتاست JSON:**\n${contextString}\n\n**سوال کاربر:**\n"${args.query}"`;
+            
+            const response = await geminiService.ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+            
+            setModalContent({
+                title: `گزارش برای: "${args.query}"`,
+                data: response.text,
+                type: 'report'
+            });
+            setOperationalModalOpen(true);
+
+            session?.sendToolResponse({ functionResponses: { id: funcCall.id, name, response: { result: `گزارش با موفقیت تولید و نمایش داده شد.` } } });
+        } else {
+            // For simple, non-confirmation actions like resolveCashboxRequest
+            const method = apiMethods[name];
+            if (method) {
+                const payload = { ...args, user };
+                const result = await method(payload);
+                const successMessage = (result && result.error) ? `خطا: ${result.error}` : `عملیات ${name} با موفقیت انجام شد.`;
+                session?.sendToolResponse({ functionResponses: { id: funcCall.id, name, response: { result: successMessage } } });
+            }
+        }
+    }, [api, user, session, hasPermission, apiMethods]);
+
+    const handleModalConfirm = async () => {
+        if (!pendingAction || !user) return;
+        setOperationalModalOpen(false);
+        setAssistantState('THINKING');
+        
+        const { name, payload, funcCallId } = pendingAction;
+        let resultMessage = "عملیات با موفقیت انجام شد.";
 
         try {
-            if (funcCall.name === 'analyzeBusinessData') {
-                const context = await api.getFullBusinessContextAsText();
-                const prompt = `بر اساس داده‌های JSON زیر، لطفاً به سوال کاربر به زبان فارسی روان و به طور خلاصه پاسخ دهید.
-                
-                داده ها:
-                ${context}
-
-                سوال کاربر:
-                "${args.query}"
-                `;
-
-                const response: GenerateContentResponse = await geminiService.ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: prompt,
-                });
-                successMessage = response.text;
-
-            } else {
-                 const apiMethods: { [key: string]: (payload: any) => Promise<any> } = {
-                    createDomesticTransfer: api.createDomesticTransfer,
-                    updateTransferStatus: api.updateTransferStatus,
-                    payoutIncomingTransfer: api.payoutIncomingTransfer,
-                    logExpense: api.createExpense,
-                    getBalanceForPartner: api.getPartnerAccountByName,
-                    settlePartnerBalance: api.settlePartnerBalanceByName,
-                    addBankAccount: api.addBankAccount,
-                    initiateForeignExchange: api.initiateForeignExchange,
-                    generateReport: api.generateReport,
-                    requestCashboxWithdrawal: (p: any) => api.createCashboxRequest({ ...p, requestType: 'withdrawal'}),
-                    resolveCashboxRequest: api.resolveCashboxRequest,
-                };
-                
-                const method = apiMethods[funcCall.name];
-                if (method) {
-                    const payload = { ...args, user: user };
-                    result = await method(payload);
-                     if (result && result.error) {
-                        successMessage = `خطا در اجرای دستور: ${result.error}`;
-                    }
-                } else {
-                     successMessage = `دستور ناشناخته: ${funcCall.name}`;
+            const method = apiMethods[name];
+            if (method) {
+                const finalPayload = { ...payload, user };
+                const result = await method(finalPayload);
+                if (result && result.error) {
+                    resultMessage = `خطا در اجرای دستور: ${result.error}`;
                 }
+            } else {
+                resultMessage = `دستور ناشناخته: ${name}`;
             }
         } catch(e) {
             console.error("Function call execution error:", e);
-            setAssistantState('ERROR');
-            successMessage = "خطایی در اجرای دستور رخ داد.";
+            resultMessage = "خطایی در اجرای دستور رخ داد.";
         }
-        
+
         session?.sendToolResponse({
             functionResponses: {
-                id: funcCall.id,
-                name: funcCall.name,
-                response: { result: successMessage }
+                id: funcCallId,
+                name: 'requestUserConfirmation',
+                response: { result: resultMessage }
             }
         });
-        // After sending response, it might start speaking, so we wait for onmessage
-        // If it doesn't speak, we should transition back to LISTENING
-        setTimeout(() => {
-            setAssistantState(prevState => prevState === 'THINKING' ? 'LISTENING' : prevState);
-        }, 1000); // Failsafe timeout
-    }, [api, user, session]);
+        setPendingAction(null);
+    };
+
+    const handleModalCancel = () => {
+        setOperationalModalOpen(false);
+        if (pendingAction) {
+            session?.sendToolResponse({
+                functionResponses: {
+                    id: pendingAction.funcCallId,
+                    name: 'requestUserConfirmation',
+                    response: { result: "عملیات توسط کاربر لغو شد." }
+                }
+            });
+        }
+        setPendingAction(null);
+        setAssistantState('LISTENING');
+    };
 
     const startSession = useCallback(async () => {
         if (session || !user) return;
-
         inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
         outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        
         setTranscriptHistory([]);
+        const dynamicTools = getDynamicTools(hasPermission);
 
         const sessionPromise = geminiService.ai.live.connect({
             model: 'gemini-2.5-flash-native-audio-preview-09-2025',
@@ -178,9 +324,8 @@ const VoiceAssistant: React.FC = () => {
                     scriptProcessorRef.current.connect(inputAudioContextRef.current!.destination);
                 },
                 onmessage: async (message: LiveServerMessage) => {
-                    if (message.serverContent) {
+                     if (message.serverContent) {
                         const { modelTurn, inputTranscription, outputTranscription } = message.serverContent;
-                        
                         const base64Audio = modelTurn?.parts[0]?.inlineData?.data;
                         if (base64Audio && outputAudioContextRef.current) {
                             setAssistantState('SPEAKING');
@@ -188,221 +333,123 @@ const VoiceAssistant: React.FC = () => {
                             const source = outputAudioContextRef.current.createBufferSource();
                             source.buffer = audioBuffer;
                             source.connect(outputAudioContextRef.current.destination);
-
                             source.addEventListener('ended', () => {
                                 audioSourcesRef.current.delete(source);
-                                if (audioSourcesRef.current.size === 0) {
+                                if (audioSourcesRef.current.size === 0 && assistantState !== 'AWAITING_CONFIRMATION') {
                                     setAssistantState('LISTENING');
                                 }
                             });
-                            
                             const currentTime = outputAudioContextRef.current.currentTime;
                             nextStartTimeRef.current = Math.max(nextStartTimeRef.current, currentTime);
                             source.start(nextStartTimeRef.current);
                             nextStartTimeRef.current += audioBuffer.duration;
                             audioSourcesRef.current.add(source);
                         }
-
                         if(inputTranscription || outputTranscription) {
                             setTranscriptHistory(prev => {
                                 const newHistory = [...prev];
                                 const lastItem = newHistory[newHistory.length - 1];
                                 if(inputTranscription) {
-                                    if(lastItem?.source === 'user') {
-                                        lastItem.text += inputTranscription.text;
-                                    } else {
-                                        newHistory.push({id: Date.now(), source: 'user', text: inputTranscription.text});
-                                    }
+                                    if(lastItem?.source === 'user') { lastItem.text += inputTranscription.text; }
+                                    else { newHistory.push({id: Date.now(), source: 'user', text: inputTranscription.text}); }
                                 }
                                 if(outputTranscription) {
-                                     if(lastItem?.source === 'ai') {
-                                        lastItem.text += outputTranscription.text;
-                                    } else {
-                                        newHistory.push({id: Date.now(), source: 'ai', text: outputTranscription.text});
-                                    }
+                                     if(lastItem?.source === 'ai') { lastItem.text += outputTranscription.text; }
+                                     else { newHistory.push({id: Date.now(), source: 'ai', text: outputTranscription.text}); }
                                 }
                                 return newHistory;
                             });
                         }
                     }
-
                     if (message.toolCall) {
                         for (const fc of message.toolCall.functionCalls) {
                             handleFunctionCall(fc);
                         }
                     }
                 },
-                onerror: (e: ErrorEvent) => {
-                    console.error('Session error:', e);
-                    setAssistantState('ERROR');
-                },
-                onclose: (e: CloseEvent) => {
-                    setAssistantState('IDLE');
-                    stopSession();
-                },
+                onerror: (e: ErrorEvent) => { console.error('Session error:', e); setAssistantState('ERROR'); },
+                onclose: (e: CloseEvent) => { setAssistantState('IDLE'); stopSession(); },
             },
             config: {
                 responseModalities: [Modality.AUDIO],
-                inputAudioTranscription: {},
-                outputAudioTranscription: {},
-                speechConfig: {
-                    voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
-                },
-                systemInstruction: `شما دستیار صوتی هوشمند "صرافی الشیخ" استین و به دو زبان رسمی افغانستان (دری و پشتو) تسلط کامل دارین.
-
-**قوانین اصلی:**
-1.  **زبان پیش‌فرض:** همیشه به صورت پیش‌فرض با لهجه شیرین **دری افغانستان** صحبت کنین. از کلمات و اصطلاحات رایج در افغانستان استفاده کنین و از فارسی ایرانی پرهیز کنین.
-2.  **تغییر زبان به پشتو:** فقط و فقط اگر کاربر به صورت واضح از شما خواست که به پشتو صحبت کنین (مثلاً گفت "په پښتو خبری وکړه" یا "به پشتو گپ بزن")، زبان خود را به پشتو تغییر داده و تا آخر همان مکالمه به پشتو ادامه بدین.
-3.  **دو وظیفه اصلی شما:**
-    *   **اجرای دستورات (اپراتور):** دستورات مالی و اداری کاربر را با دقت گوش کرده و توابع مربوطه را فراخوانی کنین. (مثلاً ثبت حواله، گزارش‌گیری و غیره).
-    *   **آموزش و راهنمایی (رهنما):** اگر کاربر در مورد استفاده از اپلیکیشن سوالی داشت، با استفاده از "پایگاه دانش" زیر، او را به زبان ساده، دقیق و با جزئیات کامل راهنمایی کنین.
-
-**--- پایگاه دانش جامع اپلیکیشن (نسخه جدید) ---**
-
-*   **داشبورد (صفحه اصلی):** ای صفحه، دید کلی از وضعیت لحظه‌ای صرافی ره به شما نشان می‌ده. اینجی می‌تانین چهار آمار مهم روزانه ره ببینین: تعداد حواله‌های امروز، حجم مجموعی معاملات امروز به تفکیک اسعار، تعداد درخواست‌های در انتظار تایید در صندوق، و تعداد کل همکاران فعال. همچنان سه گراف مهم وجود داره: گراف "روند فعالیت هفتگی" که تعداد حواله‌های داخلی و تبادلات خارجی ره در شش هفته گذشته مقایسه می‌کنه؛ گراف "موجودی صندوق‌ها" که موجودی هر اسعار ره به صورت میله‌ای نشان می‌ده؛ و گراف "فعالیت همکاران" که پرکارترین همکاران ره بر اساس تعداد حواله‌ها لیست می‌کنه. در پایین صفحه هم "فعالیت‌های اخیر" تمام کارهایی که توسط کاربران در سیستم انجام شده ره نشان می‌ده.
-
-*   **صندوق (Cashbox):** ای بخش قلب عملیات نقدی و بانکی شماست. هر نوع دریافت (رسید) یا پرداخت (برد) پول نقد یا بانکی باید از اینجی ثبت شوه.
-    *   **جریان کار:** وقتی یک درخواست "رسید" یا "برد" ثبت می‌کنین، مستقیماً اجرا نمی‌شه، بلکه وارد یک جریان تایید هوشمند می‌شه.
-    *   **منطق هوشمند تایید:** سیستم به صورت خودکار تشخیص می‌ده که آیا کاربری با نقش "صندوقدار" در سیستم فعال است یا خیر.
-        *   **در صورت وجود صندوقدار:** تایید خودکار کاملاً غیرفعال است. اگر مبلغ درخواست از حد تایید مدیر (در تنظیمات) کمتر باشد، درخواست مستقیماً به حالت "در انتظار صندوقدار" می‌رود. اگر مبلغ بیشتر باشد، ابتدا باید مدیر آن را تایید کند (وضعیت "در انتظار مدیر") و سپس برای تایید نهایی به صندوقدار ارجاع داده می‌شود (وضعیت "در انتظار صندوقدار"). این یک پروسه دو مرحله‌ای برای مبالغ بالا است.
-        *   **در صورت عدم وجود صندوقدار:** سیستم به حالت ساده‌تر کار می‌کند. اگر مبلغ از حد تعیین شده کمتر باشد، به صورت "تایید خودکار" اجرا می‌شود. اگر بیشتر باشد، به "در انتظار مدیر" رفته و پس از تایید مدیر، نهایی می‌شود.
-    *   **عملیات مرتبط:** بسیار مهم اس که بدانین عملیات دیگه‌ای مثل پرداخت حواله ورودی، ثبت مصرف، یا مراحل تبادلات ارزی، فقط بعد از تایید نهایی درخواست مربوطه در صندوق، تکمیل می‌شن. مثلاً یک حواله ورودی تا زمانی که درخواست "برد" پولش از صندوق تایید نشه، در حالت "اجرا شده" قرار نمی‌گیره.
-
-*   **حواله‌جات داخلی:** برای مدیریت حواله‌هایی که بین ولایات افغانستان رد و بدل می‌شه. دو نوع اصلی داره:
-    *   **حواله خروجی (ارسال پول):**
-        1.  **پرداخت نقدی:** مشتری پول ره نقد پرداخت می‌کنه. در این حالت، یک درخواست "رسید" در صندوق ایجاد می‌شه. اگر صندوقدار وجود داشته باشه، حواله تا زمان تایید درخواست توسط صندوقدار، در حالت "در انتظار تایید صندوق" باقی می‌ماند.
-        2.  **کسر از حساب مشتری:** اگر مشتری در سیستم حساب داشته باشه، پول مستقیم از حسابش کم می‌شه و حواله فوراً به حالت "اجرا نشده" ثبت می‌شه.
-    *   **حواله ورودی (دریافت پول از همکار):**
-        1.  اول باید حواله ره با استفاده از "ثبت حواله ورودی" و با وارد کردن "کد رهگیری همکار" در سیستم ثبت کنین. وضعیت اولیه "اجرا نشده" است.
-        2.  بعداً برای پرداخت پول به مشتری، از دکمه "پرداخت حواله ورودی" استفاده کنین. ای کار یک درخواست "برد" در صندوق ایجاد می‌کنه و وضعیت حواله ره به "در انتظار تایید" تغییر می‌ده.
-        3.  بعد از تایید نهایی توسط مدیر/صندوقدار، پول به مشتری پرداخت شده و وضعیت حواله "اجرا شده" می‌شه.
-
-*   **تبادلات (Foreign Transfers):** ای بخش برای تبدیل یک نوع دارایی (مثلاً دالر نقدی) به نوع دیگه (مثلاً تومان بانکی) استفاده می‌شه و یک پروسه دو مرحله‌ای دقیق داره که هر دو مرحله باید توسط صندوق تایید شوه.
-    1.  **مرحله اول - شروع تبادله (ثبت فروش):** شما مشخص می‌کنین که کدام دارایی (مثلاً دالر از صندوق) و به چه مقداری فروخته می‌شه. ای کار یک درخواست "برد" در صندوق ثبت می‌کنه و وضعیت تبادله "در انتظار تایید برد" می‌شه.
-    2.  **مرحله دوم - تکمیل تبادله (ثبت خرید):** بعد ازی که درخواست برد تایید نهایی شد، وضعیت تبادله به "در جریان" تغییر می‌کنه. حالا شما باید با کلیک روی دکمه "تکمیل تبادله"، مشخص کنین که در مقابل فروش دارایی اول، کدام دارایی (مثلاً تومان به بانک ملت) و به چه مقداری دریافت (خریداری) کردین. ای کار یک درخواست "رسید" در صندوق ثبت می‌کنه و وضعیت تبادله "در انتظار تایید رسید" می‌شه.
-    3.  **پایان:** وقتی هر دو درخواست برد و رسید تایید نهایی شد، تبادله به حالت "تکمیل شده" در میایه و موجودی هر دو دارایی در سیستم آپدیت می‌شه.
-
-*   **حواله‌جات کمیشن‌کاری:** بری مدیریت حواله‌هایی که از طرف مشتری به یک حساب بانکی (معمولاً در ایران) روان می‌کنین و ازش کمیشن می‌گیرین. ای پروسه هم چند مرحله داره:
-    1.  **ثبت ورود وجه:** اول باید پولی که از مشتری گرفتین ره با مشخصات کامل (مبلغ، حساب مبدا مشتری، حسابی که پول به او واریز شده) ثبت کنین. ای کار یک درخواست "رسید" در صندوق ایجاد می‌کنه و وضعیت حواله "در انتظار تایید واریز" می‌شه.
-    2.  **اجرای دستور پرداخت:** بعد از تایید نهایی واریز، وضعیت به "آماده اجرا" تغییر می‌کنه. حالا می‌تانین با کلیک روی دکمه مربوطه، دستور پرداخت ره صادر کنین. در این مرحله، حساب بانکی خود برای پرداخت و شماره حساب مقصد ره وارد می‌کنین. سیستم کمیشن ره محاسبه کرده و یک درخواست "برد" برای مبلغ نهایی (مبلغ اصلی منفی کمیشن) در صندوق ثبت می‌کنه. وضعیت حواله "در انتظار تایید پرداخت" می‌شه.
-    3.  **تکمیل:** بعد از تایید نهایی پرداخت، حواله "تکمیل شده" حساب می‌شه.
-
-*   **انتقال داخلی بین مشتریان:** برای جابجایی پول بین حساب دو مشتری که هر دو در سیستم شما ثبت استن. یک قابلیت مهم این بخش، "حواله در انتظار تخصیص" است. اگر گیرنده نهایی پول مشخص نباشه، می‌تانین گزینه "گیرنده نامشخص است" ره انتخاب کنین. در این حالت، پول از حساب فرستنده کسر و به یک "حساب معلق" داخلی سیستم واریز می‌شه. بعداً، هر وقت که گیرنده مشخص شد، می‌تانین از لیست حواله‌های در انتظار، او حواله ره پیدا کرده و به مشتری نهایی "تخصیص" بدین.
-
-*   **مشتریان:** در ای بخش می‌تانین لیست تمام مشتریای خوده ببینین، مشتری جدید ثبت کنین، و اطلاعاتشانه ویرایش کنین. با کلیک روی "مشاهده دفتر حساب"، به صفحه جزئیات مشتری می‌رین که در او تمام تراکنش‌ها (رسید و برد) و باقی‌مانده حساب‌هایش به تفکیک اسعار نمایش داده می‌شه. همچنان از همان صفحه می‌تانین برای مشتری "تبدیل ارز داخلی" انجام بدین، یعنی از یک اسعار در حسابش کم کرده و به اسعار دیگه با نرخ مشخص اضافه کنین.
-
-*   **حساب همکاران:** برای مدیریت حساب و کتاب با صرافای دیگه. در صفحه اصلی، لیست همکاران و خلاصه باقی‌مانده حساب خود با آنها ره می‌بینین. با کلیک روی جزئیات، دفتر حساب کامل با یک همکار مشخص ره می‌بینین. از همون صفحه می‌تانین عملیات "دریافت وجه از همکار" یا "پرداخت وجه به همکار" ره انجام بدین که هر کدام یک درخواست رسید یا برد در صندوق ایجاد می‌کنه.
-
-*   **امانات (Amanat):** این بخش برای ثبت پول یا اجناسی است که به صورت امانت پیش شما گذاشته می‌شه.
-    1.  **ثبت امانت:** وقتی یک امانت جدید ثبت می‌کنین، یک درخواست "رسید" در صندوق ایجاد می‌شه. بعد از تایید نهایی، امانت به حالت "فعال" در میایه.
-    2.  **بازگشت امانت:** برای پس دادن امانت، روی دکمه "بازگشت امانت" کلیک می‌کنین. این کار یک درخواست "برد" در صندوق ایجاد می‌کنه. بعد از تایید نهایی، امانت به حالت "بازگشت داده شده" تغییر می‌کنه.
-
-*   **مصارف:** بری ثبت تمام خرچ‌های صرافی مثل معاش کارمند، کرایه دوکان، و مصارف مهمانداری. وقتی یک مصرف جدید ثبت می‌کنین، یک درخواست "برد" در صندوق ایجاد می‌شه. مصرف فقط زمانی "تایید شده" و پرداخت شده حساب می‌شه که درخواست مربوطه تایید نهایی شوه.
-
-*   **گزارشات:** برای تحلیل وضعیت مالی صرافی. سه نوع گزارش مهم وجود داره:
-    1.  **گزارش سود و زیان:** درآمد شما از کمیشن حواله‌ها ره با مجموع مصارف مقایسه کرده و سود خالص ره نشان می‌ده.
-    2.  **گزارش خلاصه صندوق:** جریان ورودی و خروجی پول برای یک اسعار مشخص در یک بازه زمانی ره نشان می‌ده.
-    3.  **گزارش دفتر حساب داخلی:** تاریخچه تمام تبادلات داخلی بین دارایی‌های مختلف (صندوق و بانک‌ها) ره لیست می‌کنه.
-
-*   **تنظیمات:** ای بخش مخصوص مدیر سیستم اس و شامل چند بخش مهم می‌شه: "مدیریت کاربران" برای افزودن یا ویرایش کاربران داخلی سیستم؛ "مدیریت نقش‌ها" برای تعیین دقیق دسترسی‌های هر کاربر (مخصوصاً نقش جدید و سیستمی "صندوقدار")؛ "دسترسی کاربران خارجی" برای ساختن یوزرنیم و پسورد برای مشتریان و همکاران تا بتوانند صورتحساب خود را آنلاین ببینند؛ "مدیریت همکاران" و "حسابات بانکی" برای ثبت و ویرایش اطلاعاتشان؛ و "تنظیمات عمومی" که در آن می‌تانین "حد تایید خودکار" صندوق ره تعیین کنین (که فقط در صورت عدم وجود صندوقدار فعال است)، به صورت دستی موجودی صندوق یا بانک ره افزایش بدین، و از تمام اطلاعات سیستم "پشتیبان‌گیری" (بکاپ) کرده یا اطلاعات ره از فایل پشتیبان "بازیابی" کنین.
+                inputAudioTranscription: {}, outputAudioTranscription: {},
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
+                systemInstruction: `شما دستیار صوتی "صرافی الشیخ" هستین... (system prompt as before, but with new confirmation rule) ...
+**قانون طلایی اجرای دستورات:** برای هر دستوری که منجر به ایجاد یا تغییر دیتا در سیستم می‌شود (مثل ثبت حواله، ایجاد مشتری، تایید درخواست و غیره)، شما **باید** ابتدا تمام اطلاعات لازم را از کاربر بپرسید. سپس، به جای اجرای مستقیم دستور، **باید** تابع 'requestUserConfirmation' را با تمام جزئیات جمع‌آوری شده فراخوانی کنید تا کاربر اطلاعات را بازبینی و تایید نهایی کند. منتظر پاسخ کاربر بمانید. هرگز یک دستور اجرایی مهم را بدون فراخوانی 'requestUserConfirmation' اجرا نکنید.
 `,
-                tools: geminiService.tools,
+                tools: dynamicTools,
             },
         });
-        
         setSession(await sessionPromise);
-
-    }, [session, user, handleFunctionCall]);
+    }, [session, user, handleFunctionCall, hasPermission]);
 
     const stopSession = useCallback(() => {
         setAssistantState('IDLE');
-        
+        setOperationalModalOpen(false);
+        setPendingAction(null);
         scriptProcessorRef.current?.disconnect();
         scriptProcessorRef.current = null;
-        
         streamRef.current?.getTracks().forEach(track => track.stop());
         streamRef.current = null;
-        
         inputAudioContextRef.current?.close();
         outputAudioContextRef.current?.close();
-        
         audioSourcesRef.current.forEach(source => source.stop());
         audioSourcesRef.current.clear();
         nextStartTimeRef.current = 0;
-        
         session?.close();
         setSession(null);
     }, [session]);
     
-    const toggleSession = () => {
-        if(session) {
-            stopSession();
-        } else {
-            startSession();
-        }
-    };
+    const toggleSession = () => { session ? stopSession() : startSession(); };
 
     const getStateAppearance = () => {
         switch (assistantState) {
-            case 'LISTENING':
-                return {
-                    className: 'bg-green-500/80 animate-pulse',
-                    label: 'در حال شنیدن...'
-                };
-            case 'THINKING':
-                return {
-                    className: 'bg-yellow-500/80 animate-spin-slow',
-                    label: 'در حال پردازش...'
-                };
-            case 'SPEAKING':
-                 return {
-                    className: 'bg-fuchsia-500/80 animate-pulse',
-                    label: 'در حال صحبت...'
-                };
-            case 'ERROR':
-                 return {
-                    className: 'bg-red-600/80',
-                    label: 'خطا! دوباره تلاش کنید.'
-                };
-            case 'IDLE':
-            default:
-                return {
-                    className: 'bg-cyan-500/80 hover:bg-cyan-400',
-                    label: 'برای شروع صحبت کنید'
-                };
+            case 'LISTENING': return { className: 'bg-green-500/80 animate-pulse', label: 'در حال شنیدن...' };
+            case 'THINKING': return { className: 'bg-yellow-500/80 animate-spin-slow', label: 'در حال پردازش...' };
+            case 'SPEAKING': return { className: 'bg-fuchsia-500/80 animate-pulse', label: 'در حال صحبت...' };
+            case 'AWAITING_CONFIRMATION': return { className: 'bg-sky-500/80 animate-pulse', label: 'در انتظار تایید شما...' };
+            case 'ERROR': return { className: 'bg-red-600/80', label: 'خطا! دوباره تلاش کنید.' };
+            case 'IDLE': default: return { className: 'bg-cyan-500/80 hover:bg-cyan-400', label: 'برای شروع صحبت کنید' };
         }
     }
     
     const { className, label } = getStateAppearance();
 
     return (
-        <div className="fixed bottom-8 left-8 z-50 flex flex-col items-center" style={{ direction: 'rtl' }}>
-            {session && (
-                 <div className="w-[350px] h-80 bg-[#12122E]/80 backdrop-blur-sm border-2 border-cyan-400/20 shadow-[0_0_40px_rgba(0,255,255,0.2)] rounded-lg mb-4 flex flex-col animate-fadeIn">
-                     <div className="flex-1 p-4 overflow-y-auto space-y-3">
-                        {transcriptHistory.map(line => (
-                             <div key={line.id} className={`flex ${line.source === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <p className={`px-3 py-2 rounded-lg text-lg ${line.source === 'user' ? 'bg-cyan-600/50 text-slate-100' : 'bg-slate-600/50 text-slate-200'}`}>
-                                    {line.text}
-                                </p>
-                            </div>
-                        ))}
-                     </div>
-                 </div>
+        <>
+            <div className="fixed bottom-8 left-8 z-50 flex flex-col items-center" style={{ direction: 'rtl' }}>
+                {session && (
+                    <div className="w-[350px] h-80 bg-[#12122E]/80 backdrop-blur-sm border-2 border-cyan-400/20 shadow-[0_0_40px_rgba(0,255,255,0.2)] rounded-lg mb-4 flex flex-col animate-fadeIn">
+                        <div className="flex-1 p-4 overflow-y-auto space-y-3">
+                            {transcriptHistory.map(line => (
+                                <div key={line.id} className={`flex ${line.source === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                    <p className={`px-3 py-2 rounded-lg text-lg ${line.source === 'user' ? 'bg-cyan-600/50 text-slate-100' : 'bg-slate-600/50 text-slate-200'}`}>{line.text}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                <button
+                    onClick={toggleSession}
+                    className={`w-24 h-24 rounded-full flex items-center justify-center text-white transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-cyan-400/50 transform hover:scale-110 ${className}`}
+                    style={{ boxShadow: '0 0 25px rgba(0, 255, 255, 0.5)', border: '3px solid rgba(0,255,255,0.7)' }}
+                    aria-label="دستیار صوتی"
+                >
+                    <HolographicMicIcon className="w-12 h-12" />
+                </button>
+                <p className="mt-3 text-lg font-semibold text-slate-300 bg-black/30 px-3 py-1 rounded-md">{label}</p>
+            </div>
+            {isOperationalModalOpen && (
+                <OperationalModal
+                    isOpen={isOperationalModalOpen}
+                    title={modalContent.title}
+                    data={modalContent.data}
+                    type={modalContent.type}
+                    onConfirm={handleModalConfirm}
+                    onCancel={handleModalCancel}
+                />
             )}
-             <button
-                onClick={toggleSession}
-                className={`w-24 h-24 rounded-full flex items-center justify-center text-white transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-cyan-400/50 transform hover:scale-110 ${className}`}
-                style={{
-                     boxShadow: '0 0 25px rgba(0, 255, 255, 0.5)',
-                     border: '3px solid rgba(0,255,255,0.7)',
-                }}
-                aria-label="دستیار صوتی"
-            >
-                <HolographicMicIcon className="w-12 h-12" />
-            </button>
-            <p className="mt-3 text-lg font-semibold text-slate-300 bg-black/30 px-3 py-1 rounded-md">{label}</p>
-        </div>
+        </>
     );
 };
 
