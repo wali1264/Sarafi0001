@@ -38,8 +38,39 @@ const ActivityDetail: React.FC<{ label: string, value: any }> = ({ label, value 
     );
 };
 
+const CashboxHistoryTimeline: React.FC<{ history: CashboxRequest['history'] }> = ({ history }) => {
+    if (!history || history.length === 0) {
+        return <p>تاریخچه‌ای برای این درخواست یافت نشد.</p>;
+    }
+
+    return (
+        <div>
+            <h4 className="text-xl font-bold text-cyan-300 mb-3">تاریخچه تایید</h4>
+            <ol className="relative border-r-2 border-cyan-400/30 mr-3 space-y-4">
+                {history.map((event, index) => (
+                    <li key={index} className="mr-6">
+                        <span className="absolute flex items-center justify-center w-6 h-6 bg-cyan-600 rounded-full -right-3 ring-4 ring-[#12122E]">
+                            <svg className="w-3 h-3 text-cyan-200" fill="currentColor" viewBox="0 0 20 20"><path d="M20 4a2 2 0 0 0-2-2h-2V1a1 1 0 0 0-2 0v1h-3V1a1 1 0 0 0-2 0v1H6V1a1 1 0 0 0-2 0v1H2a2 2 0 0 0-2 2v2h20V4zM0 18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8H0v10zM5 12h10v2H5v-2z"></path></svg>
+                        </span>
+                        <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
+                            <h5 className="text-lg font-semibold text-slate-100">{event.action}</h5>
+                            <p className="text-base text-slate-400">توسط: {event.user}</p>
+                            <time className="text-sm font-normal text-slate-500">{new Date(event.timestamp).toLocaleString('fa-IR')}</time>
+                        </div>
+                    </li>
+                ))}
+            </ol>
+        </div>
+    );
+};
+
+
 const ActivityItemCard: React.FC<{ item: ActivityItem }> = ({ item }) => {
     const [isExpanded, setIsExpanded] = useState(false);
+    
+    const isCashboxRequest = item.type.includes('صندوق');
+    const hasHistory = isCashboxRequest && item.details.history && item.details.history.length > 0;
+
     return (
         <li className={`p-4 border-l-4 ${item.colorClass} bg-cyan-400/5 hover:bg-cyan-400/10 transition-colors`}>
             <div className="flex items-start justify-between gap-4">
@@ -55,10 +86,16 @@ const ActivityItemCard: React.FC<{ item: ActivityItem }> = ({ item }) => {
                 </button>
             </div>
             {isExpanded && (
-                <div className="mt-4 pt-4 border-t border-cyan-400/20">
+                <div className="mt-4 pt-4 border-t border-cyan-400/20 space-y-4">
+                    {hasHistory ? (
+                        <CashboxHistoryTimeline history={item.details.history} />
+                    ) : null}
+
                     <dl className="text-sm bg-slate-800/50 rounded-lg overflow-hidden border border-slate-700">
-                        {Object.entries(item.details).map(([key, value]) => (
-                            <ActivityDetail key={key} label={key} value={value} />
+                        {Object.entries(item.details)
+                            .filter(([key]) => key !== 'history') // Don't show history as a raw JSON
+                            .map(([key, value]) => (
+                                <ActivityDetail key={key} label={key} value={value} />
                         ))}
                     </dl>
                 </div>

@@ -289,6 +289,12 @@ export interface CashboxRequest {
     bank_account_id?: string;
     source_account_number?: string;
     destination_account_number?: string;
+    history: {
+        status: CashboxRequestStatus;
+        user: string;
+        timestamp: string;
+        action: string;
+    }[];
 }
 
 export interface CreateCashboxRequestPayload {
