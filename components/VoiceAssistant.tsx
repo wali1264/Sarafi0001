@@ -209,7 +209,9 @@ const VoiceAssistant: React.FC = () => {
             setOperationalModalOpen(true);
             setAssistantState('AWAITING_CONFIRMATION');
         } else if (name === 'analyzeBusinessData') {
-            const secureContext: any = {};
+            const secureContext: any = {
+                _report_generated_at: new Date().toISOString()
+            };
             const dataPromises: Promise<any>[] = [];
             const contextKeys: string[] = [];
             if (hasPermission('cashbox', 'view')) { dataPromises.push(api.getCashboxRequests()); contextKeys.push('cashboxRequests'); dataPromises.push(api.getCashboxBalances()); contextKeys.push('cashboxBalances'); }
@@ -223,7 +225,20 @@ const VoiceAssistant: React.FC = () => {
             results.forEach((res, index) => { secureContext[contextKeys[index]] = res; });
 
             const contextString = JSON.stringify(secureContext, null, 2);
-            const prompt = `شما یک تحلیلگر ارشد دیتای مالی در صرافی الشیخ هستید... (prompt as before) ... \n\n**دیتاست JSON:**\n${contextString}\n\n**سوال کاربر:**\n"${args.query}"`;
+            const prompt = `
+شما یک تحلیلگر ارشد دیتای مالی در صرافی الشیخ هستید. بر اساس دیتاست JSON لحظه‌ای که در زیر ارائه شده، به سوال کاربر پاسخ دقیق و کاملی بدهید.
+
+**نکات مهم:**
+- این دیتاست یک تصویر زنده از دیتابیس در زمان '_report_generated_at' است.
+- پاسخ شما باید فقط و فقط بر اساس این دیتاست باشد.
+- با اطمینان کامل پاسخ دهید و هرگز نگویید اطلاعات شما قدیمی است.
+
+**دیتاست JSON:**
+${contextString}
+
+**سوال کاربر:**
+"${args.query}"
+`;
             
             const response = await geminiService.ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
             
@@ -374,8 +389,18 @@ const VoiceAssistant: React.FC = () => {
                 responseModalities: [Modality.AUDIO],
                 inputAudioTranscription: {}, outputAudioTranscription: {},
                 speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                systemInstruction: `شما دستیار صوتی "صرافی الشیخ" هستین... (system prompt as before, but with new confirmation rule) ...
-**قانون طلایی اجرای دستورات:** برای هر دستوری که منجر به ایجاد یا تغییر دیتا در سیستم می‌شود (مثل ثبت حواله، ایجاد مشتری، تایید درخواست و غیره)، شما **باید** ابتدا تمام اطلاعات لازم را از کاربر بپرسید. سپس، به جای اجرای مستقیم دستور، **باید** تابع 'requestUserConfirmation' را با تمام جزئیات جمع‌آوری شده فراخوانی کنید تا کاربر اطلاعات را بازبینی و تایید نهایی کند. منتظر پاسخ کاربر بمانید. هرگز یک دستور اجرایی مهم را بدون فراخوانی 'requestUserConfirmation' اجرا نکنید.
+                systemInstruction: `شما دستیار صوتی هوشمند "صرافی الشیخ" هستید. وظیفه شما کمک به مدیران و کارمندان برای مدیریت امور صرافی از طریق دستورات صوتی است. شما باید مودب، حرفه‌ای و فوق‌العاده دقیق باشید.
+
+**راهنمای کلی:**
+- شما می‌توانید تمام بخش‌های اپلیکیشن را آموزش دهید.
+- شما می‌توانید گزارشات دقیق و تحلیلی ارائه دهید.
+- شما می‌توانید دستورات اجرایی را بر اساس دسترسی کاربر انجام دهید.
+
+**قانون طلایی اجرای دستورات:**
+برای هر دستوری که منجر به ایجاد یا تغییر دیتا در سیستم می‌شود (مثل ثبت حواله، ایجاد مشتری، تایید درخواست)، شما **باید** ابتدا تمام اطلاعات لازم را از کاربر بپرسید. سپس، به جای اجرای مستقیم دستور، **باید** تابع 'requestUserConfirmation' را با تمام جزئیات جمع‌آوری شده فراخوانی کنید تا کاربر اطلاعات را بازبینی و تایید نهایی کند. هرگز یک دستور اجرایی مهم را بدون فراخوانی 'requestUserConfirmation' اجرا نکنید.
+
+**قانون طلایی تحلیل دیتا:**
+شما به دیتابیس زنده و لحظه‌ای سیستم متصل هستید. دیتاستی که در هر سوال در اختیار شما قرار می‌گیرد، یک تصویر کامل و زنده از وضعیت سیستم در همان لحظه است. این دیتاست شامل یک فیلد به نام '_report_generated_at' است که زمان دقیق استخراج گزارش را نشان می‌دهد. پاسخ‌های شما باید منحصراً بر اساس این دیتای لحظه‌ای باشد و با اطمینان کامل ارائه شوند. **هرگز نگویید که به اطلاعات لحظه‌ای دسترسی ندارید یا اطلاعات شما قدیمی است.** شما همیشه به جدیدترین اطلاعات دسترسی دارید.
 `,
                 tools: dynamicTools,
             },
