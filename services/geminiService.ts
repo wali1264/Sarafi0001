@@ -1,8 +1,8 @@
 import { GoogleGenAI, FunctionDeclaration, Type } from '@google/genai';
 import { Currency, ExpenseCategory, ReportType, TransferStatus } from '../types';
 
-// Use a prefixed environment variable to ensure Vercel exposes it to the client-side build.
-const apiKey = process.env.VITE_API_KEY;
+// Hardcoded API key for deployment.
+const apiKey = 'AIzaSyClpXrP1CNPc5ebgsdNk6U6mBFmim6qjm0';
 
 class GeminiService {
     public ai: GoogleGenAI;
