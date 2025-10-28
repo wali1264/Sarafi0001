@@ -614,17 +614,10 @@ class SarrafiApiService {
         return data;
     }
 
-    async generateReport(payload: GenerateReportPayload): Promise<any[] | { error: string }> {
-        const { data, error } = await supabase.rpc('generate_report', {
-            p_report_type: payload.report_type,
-            p_start_date: payload.start_date,
-            p_end_date: payload.end_date,
-        });
-        if (error) {
-            console.error('generateReport RPC error:', error);
-            return { error: error.message };
-        }
-        return data || [];
+    async generateReport(payload: GenerateReportPayload): Promise<ProfitAndLossReportData | CashboxSummaryReportData | InternalLedgerReportData | { error: string }> {
+        const { data, error } = await supabase.rpc('generate_report', payload);
+        if (error) return { error: error.message };
+        return data;
     }
     
     async getAmanat(): Promise<Amanat[]> {
