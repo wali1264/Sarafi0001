@@ -38,7 +38,6 @@ export const ReportsPage: React.FC = () => {
     // Filters State
     const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
     const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
-    const [statusFilter, setStatusFilter] = useState('all');
     
     // Data State
     const [reportData, setReportData] = useState<ReportData | null>(null);
@@ -82,55 +81,34 @@ export const ReportsPage: React.FC = () => {
         setReportData(null);
         
         try {
+            // Fetch maps needed for display names in the viewer, this is still necessary.
             const [customersData, partnersData] = await Promise.all([api.getCustomers(), api.getPartnerAccounts()]);
             setCustomersMap(new Map(customersData.map(c => [c.id, c.name])));
-            // FIX: Incorrectly called new Map. Added .map() to partnersData.
             setPartnersMap(new Map(partnersData.map(p => [p.id, p.name])));
-            
-            let rawData: any[] = [];
-            switch (activeReport) {
-                case 'cashbox': rawData = await api.getCashboxRequests(); break;
-                case 'domesticTransfers': rawData = await api.getDomesticTransfers(); break;
-                case 'commissionTransfers': rawData = await api.getCommissionTransfers(); break;
-                case 'expenses': rawData = await api.getExpenses(); break;
-                case 'accountTransfers': rawData = await api.getAccountTransfers(); break;
-                case 'foreignTransfers': rawData = await api.getForeignTransactions(); break;
-                case 'commissionRevenue':
-                    const [dom, com] = await Promise.all([api.getDomesticTransfers(), api.getCommissionTransfers()]);
-                    rawData = [...dom, ...com];
-                    break;
-            }
 
-            const start = new Date(startDate);
-            start.setHours(0, 0, 0, 0);
-            const end = new Date(endDate);
-            end.setHours(23, 59, 59, 999);
-
-            const filteredData = rawData.filter(item => {
-                const itemDate = new Date(item.created_at || item.timestamp);
-                const matchesDate = itemDate >= start && itemDate <= end;
-                if (!matchesDate) return false;
-                
-                if (statusFilter !== 'all' && 'status' in item && item.status !== statusFilter) {
-                    return false;
-                }
-                return true;
+            // Call the new, efficient RPC that filters on the server
+            const result = await api.generateReport({
+                report_type: activeReport,
+                start_date: startDate,
+                end_date: endDate,
             });
+
+            if ('error' in result) {
+                throw new Error(result.error);
+            }
             
-            setReportData(filteredData);
+            setReportData(result);
         } catch (e: any) {
             setError("خطا در تولید گزارش: " + e.message);
         } finally {
             setIsLoading(false);
         }
-    }, [api, activeReport, startDate, endDate, statusFilter]);
+    }, [api, activeReport, startDate, endDate]);
     
     const renderFilters = () => {
-        const hasStatus = ['domesticTransfers', 'commissionTransfers', 'foreignTransfers'].includes(activeReport);
-        
         return (
             <div className="p-6 border-b-2 border-cyan-400/20">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-6 items-end">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
                     <div className="md:col-span-2">
                         <label className="block text-lg font-medium text-cyan-300 mb-2">بازه زمانی</label>
                         <div className="flex gap-2">
@@ -145,19 +123,6 @@ export const ReportsPage: React.FC = () => {
                             ))}
                         </div>
                     </div>
-                    {hasStatus && (
-                         <div>
-                            <label className="block text-lg font-medium text-cyan-300 mb-2">وضعیت</label>
-                            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100">
-                                <option value="all">همه</option>
-                                <option value="Completed">تکمیل شده</option>
-                                <option value="Executed">اجرا شده</option>
-                                <option value="PendingExecution">آماده اجرا</option>
-                                <option value="Pending">در انتظار</option>
-                                <option value="Rejected">رد شده</option>
-                            </select>
-                        </div>
-                    )}
                     <div className="md:col-span-2 text-left">
                          <button onClick={handleGenerateReport} disabled={isLoading} className="w-full px-6 py-3 text-xl font-bold tracking-wider text-slate-900 bg-cyan-400 hover:bg-cyan-300 disabled:opacity-50" style={{ clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%)' }}>
                             {isLoading ? 'در حال تولید...' : 'تولید گزارش'}
