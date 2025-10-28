@@ -21,7 +21,7 @@ const CreateCashboxRequestModal: React.FC<CreateCashboxRequestModalProps> = ({ i
         amount: '',
         currency: Currency.USD,
         reason: '',
-        customerCode: '',
+        customerIdentifier: '',
         bankAccountId: '',
         sourceAccountNumber: '',
         destinationAccountNumber: '',
@@ -48,27 +48,27 @@ const CreateCashboxRequestModal: React.FC<CreateCashboxRequestModalProps> = ({ i
     }, [isOpen, api]);
 
 
-    const checkCustomerCode = useCallback(debounce(async (code: string) => {
-        if (!code) {
+    const checkCustomer = useCallback(debounce(async (query: string) => {
+        if (!query) {
             setCustomerInfo(null);
             return;
         }
         setIsCheckingCustomer(true);
-        const result = await api.getCustomerByCode(code);
+        const result = await api.findCustomerByCodeOrName(query);
         setCustomerInfo(result || null);
         setIsCheckingCustomer(false);
     }, 500), [api]);
 
     useEffect(() => {
-        checkCustomerCode(formData.customerCode);
-    }, [formData.customerCode, checkCustomerCode]);
+        checkCustomer(formData.customerIdentifier);
+    }, [formData.customerIdentifier, checkCustomer]);
 
 
     if (!isOpen) return null;
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
-        if (['amount', 'customerCode', 'sourceAccountNumber', 'destinationAccountNumber'].includes(name)) {
+        if (['amount', 'sourceAccountNumber', 'destinationAccountNumber'].includes(name)) {
             setFormData(prev => ({ ...prev, [name]: persianToEnglishNumber(value) }));
         } else {
             setFormData(prev => ({ ...prev, [name]: value }));
@@ -79,8 +79,8 @@ const CreateCashboxRequestModal: React.FC<CreateCashboxRequestModalProps> = ({ i
         e.preventDefault();
         setIsLoading(true);
         
-        if(formData.customerCode && !customerInfo) {
-            addToast("کد مشتری وارد شده معتبر نیست.", 'error');
+        if(formData.customerIdentifier && !customerInfo) {
+            addToast("کد یا نام مشتری وارد شده معتبر نیست.", 'error');
             setIsLoading(false);
             return;
         }
@@ -89,13 +89,12 @@ const CreateCashboxRequestModal: React.FC<CreateCashboxRequestModalProps> = ({ i
             setIsLoading(false);
             return;
         }
-// FIX: Changed payload keys to snake_case to match the API definition.
         const payload: CreateCashboxRequestPayload = {
             request_type: formData.requestType,
             amount: parseFloat(formData.amount) || 0,
             currency: formData.currency,
             reason: formData.reason,
-            customer_code: formData.customerCode || undefined,
+            customer_code: customerInfo?.code, // Use the code from the found customer
             user: currentUser,
             bank_account_id: isBankTransaction ? formData.bankAccountId : undefined,
             source_account_number: isBankTransaction && formData.requestType === 'deposit' ? formData.sourceAccountNumber : undefined,
@@ -164,11 +163,11 @@ const CreateCashboxRequestModal: React.FC<CreateCashboxRequestModalProps> = ({ i
                         )}
 
                         <div>
-                            <label htmlFor="customerCode" className="block text-lg font-medium text-cyan-300 mb-2">کد مشتری (اختیاری)</label>
-                            <input type="text" name="customerCode" value={formData.customerCode} onChange={handleChange} placeholder="مثلا: 001 یا 201" className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100 focus:outline-none focus:border-cyan-400 text-right font-mono" />
+                            <label htmlFor="customerIdentifier" className="block text-lg font-medium text-cyan-300 mb-2">کد یا نام مشتری (اختیاری)</label>
+                            <input type="text" name="customerIdentifier" value={formData.customerIdentifier} onChange={handleChange} placeholder="کد یا بخشی از نام مشتری را وارد کنید..." className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100 focus:outline-none focus:border-cyan-400 text-right" />
                             {isCheckingCustomer && <p className="text-sm text-slate-400 mt-1">در حال بررسی...</p>}
-                            {customerInfo && <p className="text-sm text-green-400 mt-1">✓ مشتری یافت شد: {customerInfo.name}</p>}
-                            {customerInfo === null && formData.customerCode && !isCheckingCustomer && <p className="text-sm text-red-400 mt-1">مشتری با این کد یافت نشد.</p>}
+                            {customerInfo && <p className="text-sm text-green-400 mt-1">✓ مشتری یافت شد: {customerInfo.name} (کد: {customerInfo.code})</p>}
+                            {customerInfo === null && formData.customerIdentifier && !isCheckingCustomer && <p className="text-sm text-red-400 mt-1">مشتری با این کد یا نام یافت نشد.</p>}
                              <p className="text-sm text-yellow-400 mt-2">توجه: وارد کردن کد مشتری باعث ثبت این تراکنش در دفتر حساب او خواهد شد.</p>
                         </div>
                         <div>

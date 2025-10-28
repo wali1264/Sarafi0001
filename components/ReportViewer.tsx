@@ -37,7 +37,6 @@ const ReportViewer: React.FC<ReportViewerProps> = ({ reportData, reportType, cus
 
     const { headers, rows, summary } = useMemo(() => {
         let headers: string[] = [];
-        // FIX: The JSX namespace is not available. Replaced JSX.Element with React.ReactNode for better type compatibility.
         let rows: (string | number | React.ReactNode)[][] = [];
         let summary: { label: string; value: string }[] = [];
 
@@ -110,24 +109,15 @@ const ReportViewer: React.FC<ReportViewerProps> = ({ reportData, reportType, cus
                 
              case 'commissionRevenue':
                 headers = ["تاریخ", "نوع حواله", "شناسه", "مبلغ کمیسیون"];
-                const revenueData = reportData as (DomesticTransfer | CommissionTransfer)[];
-                const revenueItems = revenueData
-                    .filter(r => (r as DomesticTransfer).commission > 0 || (r as CommissionTransfer).commission_amount > 0)
-                    .map(r => {
-                        const isDomestic = 'commission' in r;
-                        return {
-                            date: new Date(r.created_at).toLocaleString('fa-IR'),
-                            type: isDomestic ? 'داخلی' : 'کمیشن‌کاری',
-                            id: r.id,
-                            commission: formatCurrency(isDomestic ? r.commission : (r as CommissionTransfer).commission_amount || 0, isDomestic ? r.currency : (r as CommissionTransfer).currency)
-                        };
-                    });
-                rows = revenueItems.map(item => Object.values(item));
-                const totalRevenue = revenueData.reduce((sum, r) => {
-                    const isDomestic = 'commission' in r;
-                    const amount = isDomestic ? r.commission : (r as CommissionTransfer).commission_amount || 0;
-                    // Note: This summary is simplified and doesn't handle multiple currencies
-                    return sum + amount;
+                const revenueData = reportData as any[]; // Combined array
+                rows = revenueData.map(r => [
+                    new Date(r.created_at).toLocaleString('fa-IR'),
+                    r.type === 'DomesticTransfer' ? 'داخلی' : 'کمیشن‌کاری',
+                    r.id,
+                    formatCurrency(r.commission_amount, r.currency)
+                ]);
+                 const totalRevenue = revenueData.reduce((sum, r) => {
+                    return sum + r.commission_amount;
                 }, 0);
                  summary = [
                     { label: "مجموع درآمد (تخمینی)", value: new Intl.NumberFormat('en-US').format(totalRevenue) },
@@ -153,6 +143,42 @@ const ReportViewer: React.FC<ReportViewerProps> = ({ reportData, reportType, cus
                 ];
                 break;
             
+            case 'accountTransfers':
+                headers = ["تاریخ", "از حساب", "به حساب", "مبلغ", "توضیحات", "کاربر"];
+                const accountData = reportData as AccountTransfer[];
+                rows = accountData.map(r => [
+                    new Date(r.timestamp).toLocaleString('fa-IR'),
+                    customersMap.get(r.from_customer_id) || r.from_customer_id,
+                    customersMap.get(r.to_customer_id) || r.to_customer_id,
+                    formatCurrency(r.amount, r.currency),
+                    r.description,
+                    r.user
+                ]);
+                const accountTotals = accountData.reduce((acc, r) => {
+                    acc[r.currency] = (acc[r.currency] || 0) + r.amount;
+                    return acc;
+                }, {} as Record<string, number>);
+                summary = Object.entries(accountTotals).map(([currency, total]) => ({
+                    label: `مجموع ${currency}`,
+                    value: formatCurrency(total, currency)
+                }));
+                summary.push({ label: "تعداد کل", value: String(accountData.length) });
+                break;
+
+            case 'foreignTransfers':
+                headers = ["تاریخ", "شرح", "مبلغ فروش", "مبلغ خرید", "وضعیت", "کاربر"];
+                const foreignData = reportData as ForeignTransaction[];
+                rows = foreignData.map(r => [
+                    new Date(r.timestamp).toLocaleString('fa-IR'),
+                    r.description,
+                    <span className="text-red-400">{formatCurrency(r.from_amount, r.from_currency)} <span className="text-xs text-slate-400">از {r.from_asset_name}</span></span>,
+                    r.to_amount ? <span className="text-green-400">{formatCurrency(r.to_amount, r.to_currency!)} <span className="text-xs text-slate-400">به {r.to_asset_name}</span></span> : '-',
+                    foreignTransactionStatusTranslations[r.status],
+                    r.user
+                ]);
+                summary = [{ label: "تعداد کل", value: String(foreignData.length) }];
+                break;
+
             default:
                 break;
         }
@@ -221,7 +247,6 @@ interface ReportPrintPreviewModalProps {
     reportData: ReportData;
     reportType: ReportTypeKey;
     headers: string[];
-    // FIX: The JSX namespace is not available. Replaced JSX.Element with React.ReactNode for better type compatibility.
     rows: (string | number | React.ReactNode)[][];
     summary: { label: string; value: string }[];
 }

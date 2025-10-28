@@ -46,7 +46,7 @@ const CreateOutgoingTransferModal: React.FC<CreateOutgoingTransferModalProps> = 
         destinationProvince: '',
         partnerSarraf: '',
         isCashPayment: true,
-        customerCode: '',
+        customerIdentifier: '',
     });
     const [allPartners, setAllPartners] = useState<PartnerAccount[]>([]);
     const [filteredPartners, setFilteredPartners] = useState<PartnerAccount[]>([]);
@@ -55,24 +55,24 @@ const CreateOutgoingTransferModal: React.FC<CreateOutgoingTransferModalProps> = 
     const [isCheckingCustomer, setIsCheckingCustomer] = useState(false);
     const [balanceWarning, setBalanceWarning] = useState<string | null>(null);
 
-    const checkCustomerCode = useCallback(debounce(async (code: string) => {
-        if (!code) {
+    const checkCustomer = useCallback(debounce(async (query: string) => {
+        if (!query) {
             setCustomerInfo(null);
             return;
         }
         setIsCheckingCustomer(true);
-        const result = await api.getCustomerByCode(code);
+        const result = await api.findCustomerByCodeOrName(query);
         setCustomerInfo(result || null);
         setIsCheckingCustomer(false);
     }, 500), [api]);
 
     useEffect(() => {
-        if (!formData.isCashPayment && formData.customerCode) {
-            checkCustomerCode(formData.customerCode);
+        if (!formData.isCashPayment && formData.customerIdentifier) {
+            checkCustomer(formData.customerIdentifier);
         } else {
             setCustomerInfo(null);
         }
-    }, [formData.customerCode, formData.isCashPayment, checkCustomerCode]);
+    }, [formData.customerIdentifier, formData.isCashPayment, checkCustomer]);
 
     useEffect(() => {
         if (!formData.isCashPayment && customerInfo) {
@@ -124,7 +124,7 @@ const CreateOutgoingTransferModal: React.FC<CreateOutgoingTransferModalProps> = 
             setFormData({
                 senderName: '', senderTazkereh: '', receiverName: '', receiverTazkereh: '',
                 amount: '', currency: Currency.USD, commission: '', destinationProvince: '',
-                partnerSarraf: '', isCashPayment: true, customerCode: '',
+                partnerSarraf: '', isCashPayment: true, customerIdentifier: '',
             });
             setFilteredPartners([]);
             setBalanceWarning(null);
@@ -145,7 +145,7 @@ const CreateOutgoingTransferModal: React.FC<CreateOutgoingTransferModalProps> = 
         else if (name === 'isCashPayment') {
              setFormData(prev => ({ ...prev, [name]: value === 'true' }));
         } else {
-            const numericFields = ['amount', 'commission', 'customerCode'];
+            const numericFields = ['amount', 'commission'];
             if (numericFields.includes(name)) {
                 setFormData(prev => ({ ...prev, [name]: persianToEnglishNumber(value) }));
             } else {
@@ -169,6 +169,12 @@ const CreateOutgoingTransferModal: React.FC<CreateOutgoingTransferModalProps> = 
     const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setIsLoading(true);
+        
+        if (!formData.isCashPayment && !customerInfo) {
+            addToast("لطفاً یک مشتری معتبر انتخاب کنید.", 'error');
+            setIsLoading(false);
+            return;
+        }
 
         const payload: CreateDomesticTransferPayload = {
             sender_name: formData.senderName,
@@ -181,7 +187,7 @@ const CreateOutgoingTransferModal: React.FC<CreateOutgoingTransferModalProps> = 
             destination_province: formData.destinationProvince,
             partner_sarraf: formData.partnerSarraf,
             is_cash_payment: formData.isCashPayment,
-            customer_code: formData.isCashPayment ? undefined : formData.customerCode,
+            customer_code: formData.isCashPayment ? undefined : customerInfo?.code,
             partner_reference: undefined, // Explicitly undefined for outgoing
             user: currentUser,
         };
@@ -228,10 +234,10 @@ const CreateOutgoingTransferModal: React.FC<CreateOutgoingTransferModalProps> = 
 
                         {!formData.isCashPayment && (
                              <div className="p-4 border-2 border-cyan-400/30 bg-cyan-400/10 rounded-md animate-fadeIn">
-                                <InputField name="customerCode" label="کد مشتری" value={formData.customerCode} onChange={handleChange} placeholder="کد مشتری ثبت شده را وارد کنید" required={!formData.isCashPayment} />
-                                {isCheckingCustomer && <p className="text-sm text-slate-400 mt-2">در حال بررسی کد مشتری...</p>}
-                                {customerInfo && !isCheckingCustomer && <p className="text-sm text-green-400 mt-2">✓ مشتری: {customerInfo.name}</p>}
-                                {customerInfo === null && formData.customerCode && !isCheckingCustomer && <p className="text-sm text-red-400 mt-2">مشتری با این کد یافت نشد.</p>}
+                                <InputField name="customerIdentifier" label="کد یا نام مشتری" value={formData.customerIdentifier} onChange={handleChange} placeholder="کد یا نام مشتری ثبت شده را وارد کنید" required={!formData.isCashPayment} />
+                                {isCheckingCustomer && <p className="text-sm text-slate-400 mt-2">در حال بررسی...</p>}
+                                {customerInfo && !isCheckingCustomer && <p className="text-sm text-green-400 mt-2">✓ مشتری: {customerInfo.name} (کد: {customerInfo.code})</p>}
+                                {customerInfo === null && formData.customerIdentifier && !isCheckingCustomer && <p className="text-sm text-red-400 mt-2">مشتری با این کد یا نام یافت نشد.</p>}
                                 {balanceWarning && !isCheckingCustomer && <p className="text-md text-yellow-300 font-bold mt-2 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded">{balanceWarning}</p>}
                              </div>
                         )}

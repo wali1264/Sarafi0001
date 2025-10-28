@@ -6,7 +6,7 @@ import { persianToEnglishNumber } from '../utils/translations';
 import { debounce } from '../utils/debounce';
 import { useToast } from '../contexts/ToastContext';
 
-const SUSPENSE_ACCOUNT_CODE = '_SUSPENSE_';
+const SUSPENSE_ACCOUNT_CODE = 'SUSPENSE';
 
 interface CreateAccountTransferModalProps {
     isOpen: boolean;
@@ -17,28 +17,26 @@ interface CreateAccountTransferModalProps {
 
 const CustomerField: React.FC<{
     label: string;
-    code: string;
+    query: string;
     customer: Customer | null | undefined; // undefined for initial, null for not found
-    onCodeChange: (code: string) => void;
-    error?: string;
+    onQueryChange: (query: string) => void;
     isLoading: boolean;
     disabled?: boolean;
-}> = ({ label, code, customer, onCodeChange, error, isLoading, disabled = false }) => (
+}> = ({ label, query, customer, onQueryChange, isLoading, disabled = false }) => (
     <div>
         <label className="block text-lg font-medium text-cyan-300 mb-2">{label}</label>
         <input 
             type="text" 
-            value={code} 
-            onChange={(e) => onCodeChange(persianToEnglishNumber(e.target.value))}
-            placeholder="کد مشتری..."
+            value={query} 
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder="کد یا نام مشتری..."
             required
             disabled={disabled}
-            className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100 focus:outline-none focus:border-cyan-400 text-right font-mono disabled:bg-slate-800 disabled:cursor-not-allowed"
+            className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100 focus:outline-none focus:border-cyan-400 text-right"
         />
         {isLoading && <div className="text-sm text-slate-400 mt-1">در حال بررسی...</div>}
-        {error && <div className="text-sm text-red-400 mt-1">{error}</div>}
-        {customer && <div className="text-sm text-green-400 mt-1">✓ {customer.name}</div>}
-        {customer === null && code && !isLoading && <div className="text-sm text-red-400 mt-1">مشتری یافت نشد.</div>}
+        {customer && <div className="text-sm text-green-400 mt-1">✓ {customer.name} (کد: {customer.code})</div>}
+        {customer === null && query && !isLoading && <div className="text-sm text-red-400 mt-1">مشتری یافت نشد.</div>}
     </div>
 );
 
@@ -46,8 +44,8 @@ const CustomerField: React.FC<{
 const CreateAccountTransferModal: React.FC<CreateAccountTransferModalProps> = ({ isOpen, onClose, onSuccess, currentUser }) => {
     const api = useApi();
     const { addToast } = useToast();
-    const [fromCode, setFromCode] = useState('');
-    const [toCode, setToCode] = useState('');
+    const [fromQuery, setFromQuery] = useState('');
+    const [toQuery, setToQuery] = useState('');
     const [isPendingAssignment, setIsPendingAssignment] = useState(false);
     const [fromCustomer, setFromCustomer] = useState<Customer | null | undefined>(undefined);
     const [toCustomer, setToCustomer] = useState<Customer | null | undefined>(undefined);
@@ -59,41 +57,41 @@ const CreateAccountTransferModal: React.FC<CreateAccountTransferModalProps> = ({
 
     const [isLoading, setIsLoading] = useState(false);
 
-    const checkCustomerCode = useCallback(debounce(async (code: string, setter: React.Dispatch<React.SetStateAction<Customer | null | undefined>>, loadingSetter: React.Dispatch<React.SetStateAction<boolean>>) => {
-        if (!code) {
+    const checkCustomer = useCallback(debounce(async (query: string, setter: React.Dispatch<React.SetStateAction<Customer | null | undefined>>, loadingSetter: React.Dispatch<React.SetStateAction<boolean>>) => {
+        if (!query) {
             setter(undefined);
             return;
         }
         loadingSetter(true);
-        const result = await api.getCustomerByCode(code);
+        const result = await api.findCustomerByCodeOrName(query);
         setter(result || null);
         loadingSetter(false);
     }, 500), [api]);
 
     useEffect(() => {
         if(isPendingAssignment) {
-            setToCode(SUSPENSE_ACCOUNT_CODE);
-            checkCustomerCode(SUSPENSE_ACCOUNT_CODE, setToCustomer, setToLoading);
+            setToQuery(SUSPENSE_ACCOUNT_CODE);
+            checkCustomer(SUSPENSE_ACCOUNT_CODE, setToCustomer, setToLoading);
         } else {
-            setToCode('');
+            setToQuery('');
             setToCustomer(undefined);
         }
-    }, [isPendingAssignment, checkCustomerCode]);
+    }, [isPendingAssignment, checkCustomer]);
 
-    const handleFromCodeChange = (code: string) => {
-        setFromCode(code);
-        checkCustomerCode(code, setFromCustomer, setFromLoading);
+    const handleFromChange = (query: string) => {
+        setFromQuery(query);
+        checkCustomer(query, setFromCustomer, setFromLoading);
     }
-    const handleToCodeChange = (code: string) => {
-        setToCode(code);
-        checkCustomerCode(code, setToCustomer, setToLoading);
+    const handleToChange = (query: string) => {
+        setToQuery(query);
+        checkCustomer(query, setToCustomer, setToLoading);
     }
 
     if (!isOpen) return null;
     
     const resetForm = () => {
-        setFromCode('');
-        setToCode('');
+        setFromQuery('');
+        setToQuery('');
         setIsPendingAssignment(false);
         setFromCustomer(undefined);
         setToCustomer(undefined);
@@ -111,17 +109,16 @@ const CreateAccountTransferModal: React.FC<CreateAccountTransferModalProps> = ({
         e.preventDefault();
 
         if (!fromCustomer || !toCustomer) {
-            addToast("لطفا از صحت کدهای مشتری مبدا و مقصد اطمینان حاصل کنید.", 'error');
+            addToast("لطفا از صحت اطلاعات مشتری مبدا و مقصد اطمینان حاصل کنید.", 'error');
             return;
         }
 
         setIsLoading(true);
 
-        // FIX: Changed payload keys to snake_case to match the API definition.
         const payload: CreateAccountTransferPayload = {
-            from_customer_code: fromCode,
-            to_customer_code: toCode,
-            amount: parseFloat(amount) || 0,
+            from_customer_code: fromCustomer.code,
+            to_customer_code: toCustomer.code,
+            amount: parseFloat(persianToEnglishNumber(amount)) || 0,
             currency,
             description,
             user: currentUser,
@@ -148,8 +145,8 @@ const CreateAccountTransferModal: React.FC<CreateAccountTransferModalProps> = ({
                     <div className="p-8 space-y-6">
                         
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <CustomerField label="برد از حساب (کد):" code={fromCode} customer={fromCustomer} onCodeChange={handleFromCodeChange} isLoading={fromLoading} />
-                            <CustomerField label="رسید به حساب (کد):" code={toCode} customer={toCustomer} onCodeChange={handleToCodeChange} isLoading={toLoading} disabled={isPendingAssignment} />
+                            <CustomerField label="برد از حساب:" query={fromQuery} customer={fromCustomer} onQueryChange={handleFromChange} isLoading={fromLoading} />
+                            <CustomerField label="رسید به حساب:" query={toQuery} customer={toCustomer} onQueryChange={handleToChange} isLoading={toLoading} disabled={isPendingAssignment} />
                         </div>
 
                         <div className="flex items-center">

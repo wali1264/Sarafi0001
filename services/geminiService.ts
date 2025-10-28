@@ -1,9 +1,8 @@
 import { GoogleGenAI, FunctionDeclaration, Type } from '@google/genai';
 import { Currency, ExpenseCategory, ReportType, TransferStatus } from '../types';
 
-// TODO: For production, this key should be moved to a secure environment variable (e.g., Vercel Environment Variables)
-// and accessed via `process.env.API_KEY`. Hardcoding is for temporary experimental deployment only.
-const apiKey = 'AIzaSyDja-PjvYDlcBaRV3g0dNxJU0LEonda2As';
+// Use the environment variable for the API key as per security best practices.
+const apiKey = process.env.API_KEY;
 
 class GeminiService {
     public ai: GoogleGenAI;

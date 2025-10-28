@@ -18,7 +18,7 @@ const LogCommissionTransferModal: React.FC<LogCommissionTransferModalProps> = ({
     const api = useApi();
     const { addToast } = useToast();
     const [initiatorType, setInitiatorType] = useState<'Customer' | 'Partner'>('Customer');
-    const [customerCode, setCustomerCode] = useState('');
+    const [customerQuery, setCustomerQuery] = useState('');
     const [province, setProvince] = useState('');
     const [partnerId, setPartnerId] = useState('');
     const [amount, setAmount] = useState('');
@@ -33,21 +33,20 @@ const LogCommissionTransferModal: React.FC<LogCommissionTransferModalProps> = ({
     const [customerInfo, setCustomerInfo] = useState<Customer | null>(null);
     const [isCheckingCustomer, setIsCheckingCustomer] = useState(false);
 
-    const checkCustomerCode = useCallback(debounce(async (code: string) => {
-        if (!code) {
+    const checkCustomer = useCallback(debounce(async (query: string) => {
+        if (!query) {
             setCustomerInfo(null);
             return;
         }
         setIsCheckingCustomer(true);
-        const result = await api.getCustomerByCode(code);
+        const result = await api.findCustomerByCodeOrName(query);
         setCustomerInfo(result || null);
         setIsCheckingCustomer(false);
     }, 500), [api]);
 
-    const handleCustomerCodeChange = (code: string) => {
-        const englishCode = persianToEnglishNumber(code);
-        setCustomerCode(englishCode);
-        checkCustomerCode(englishCode);
+    const handleCustomerQueryChange = (query: string) => {
+        setCustomerQuery(query);
+        checkCustomer(query);
     };
 
     const filteredPartners = partners.filter(p => p.province === province);
@@ -83,7 +82,7 @@ const LogCommissionTransferModal: React.FC<LogCommissionTransferModalProps> = ({
     
     const resetForm = () => {
         setInitiatorType('Customer');
-        setCustomerCode('');
+        setCustomerQuery('');
         setProvince('');
         setPartnerId('');
         setAmount('');
@@ -105,15 +104,14 @@ const LogCommissionTransferModal: React.FC<LogCommissionTransferModalProps> = ({
         setIsLoading(true);
         
         if (initiatorType === 'Customer' && !customerInfo) {
-            addToast("کد مشتری وارد شده معتبر نیست.", 'error');
+            addToast("کد یا نام مشتری وارد شده معتبر نیست.", 'error');
             setIsLoading(false);
             return;
         }
 
-        // FIX: Changed payload keys to snake_case to match the API definition.
         const payload: LogCommissionTransferPayload = {
             initiator_type: initiatorType,
-            customer_code: initiatorType === 'Customer' ? customerCode : undefined,
+            customer_code: initiatorType === 'Customer' ? customerInfo?.code : undefined,
             partner_id: initiatorType === 'Partner' ? partnerId : undefined,
             amount: parseFloat(persianToEnglishNumber(amount)) || 0,
             source_account_number: sourceAccountNumber,
@@ -154,10 +152,10 @@ const LogCommissionTransferModal: React.FC<LogCommissionTransferModalProps> = ({
                         
                         {initiatorType === 'Customer' ? (
                             <div>
-                                <input value={customerCode} onChange={e => handleCustomerCodeChange(e.target.value)} placeholder="کد مشتری" required className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100" />
+                                <input value={customerQuery} onChange={e => handleCustomerQueryChange(e.target.value)} placeholder="کد یا نام مشتری" required className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100" />
                                 {isCheckingCustomer && <p className="text-sm text-slate-400 mt-1">در حال بررسی...</p>}
-                                {customerInfo && <p className="text-sm text-green-400 mt-1">✓ مشتری یافت شد: {customerInfo.name}</p>}
-                                {customerInfo === null && customerCode && !isCheckingCustomer && <p className="text-sm text-red-400 mt-1">مشتری با این کد یافت نشد.</p>}
+                                {customerInfo && <p className="text-sm text-green-400 mt-1">✓ مشتری یافت شد: {customerInfo.name} (کد: {customerInfo.code})</p>}
+                                {customerInfo === null && customerQuery && !isCheckingCustomer && <p className="text-sm text-red-400 mt-1">مشتری با این کد یا نام یافت نشد.</p>}
                             </div>
                         ) : (
                             <div className="grid grid-cols-2 gap-4">

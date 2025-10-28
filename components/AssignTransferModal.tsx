@@ -16,31 +16,31 @@ interface AssignTransferModalProps {
 const AssignTransferModal: React.FC<AssignTransferModalProps> = ({ isOpen, onClose, onSuccess, currentUser, transfer }) => {
     const api = useApi();
     const { addToast } = useToast();
-    const [finalCustomerCode, setFinalCustomerCode] = useState('');
+    const [customerQuery, setCustomerQuery] = useState('');
     const [finalCustomer, setFinalCustomer] = useState<Customer | null | undefined>(undefined);
     const [isCheckingCode, setIsCheckingCode] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
 
-    const checkCustomerCode = useCallback(debounce(async (code: string) => {
-        if (!code) {
+    const checkCustomer = useCallback(debounce(async (query: string) => {
+        if (!query) {
             setFinalCustomer(undefined);
             return;
         }
         setIsCheckingCode(true);
-        const result = await api.getCustomerByCode(code);
+        const result = await api.findCustomerByCodeOrName(query);
         setFinalCustomer(result || null);
         setIsCheckingCode(false);
     }, 500), [api]);
 
-    const handleCodeChange = (code: string) => {
-        setFinalCustomerCode(code);
-        checkCustomerCode(code);
+    const handleQueryChange = (query: string) => {
+        setCustomerQuery(query);
+        checkCustomer(query);
     };
 
     if (!isOpen) return null;
     
     const resetForm = () => {
-        setFinalCustomerCode('');
+        setCustomerQuery('');
         setFinalCustomer(undefined);
     }
 
@@ -53,16 +53,15 @@ const AssignTransferModal: React.FC<AssignTransferModalProps> = ({ isOpen, onClo
         e.preventDefault();
 
         if (!finalCustomer) {
-            addToast("لطفاً یک کد مشتری معتبر وارد کنید.", 'error');
+            addToast("لطفاً یک مشتری معتبر وارد کنید.", 'error');
             return;
         }
 
         setIsLoading(true);
 
-        // FIX: Changed payload keys to snake_case to match the API definition.
         const payload: ReassignTransferPayload = {
             transfer_id: transfer.id,
-            final_customer_code: finalCustomerCode,
+            final_customer_code: finalCustomer.code,
             user: currentUser,
         };
 
@@ -91,19 +90,19 @@ const AssignTransferModal: React.FC<AssignTransferModalProps> = ({ isOpen, onClo
                     <div className="p-8 space-y-6">
                         
                         <div>
-                            <label htmlFor="finalCustomerCode" className="block text-lg font-medium text-cyan-300 mb-2">کد مشتری نهایی</label>
+                            <label htmlFor="customerQuery" className="block text-lg font-medium text-cyan-300 mb-2">کد یا نام مشتری نهایی</label>
                             <input 
                                 type="text"
-                                id="finalCustomerCode"
-                                value={finalCustomerCode} 
-                                onChange={(e) => handleCodeChange(persianToEnglishNumber(e.target.value))}
-                                placeholder="کد مشتری گیرنده را وارد کنید..."
+                                id="customerQuery"
+                                value={customerQuery} 
+                                onChange={(e) => handleQueryChange(e.target.value)}
+                                placeholder="کد یا نام مشتری گیرنده را وارد کنید..."
                                 required
-                                className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100 focus:outline-none focus:border-cyan-400 text-right font-mono"
+                                className="w-full text-xl px-3 py-2 bg-slate-900/50 border-2 border-slate-600/50 rounded-md text-slate-100 focus:outline-none focus:border-cyan-400 text-right"
                             />
                              {isCheckingCode && <div className="text-sm text-slate-400 mt-1">در حال بررسی...</div>}
-                             {finalCustomer && <div className="text-sm text-green-400 mt-1">✓ {finalCustomer.name}</div>}
-                             {finalCustomer === null && finalCustomerCode && !isCheckingCode && <div className="text-sm text-red-400 mt-1">مشتری یافت نشد.</div>}
+                             {finalCustomer && <div className="text-sm text-green-400 mt-1">✓ {finalCustomer.name} (کد: {finalCustomer.code})</div>}
+                             {finalCustomer === null && customerQuery && !isCheckingCode && <div className="text-sm text-red-400 mt-1">مشتری یافت نشد.</div>}
                         </div>
                         <p className="text-yellow-400 text-base">با تایید، این مبلغ از حساب معلق کسر و به حساب مشتری انتخاب شده واریز خواهد شد.</p>
 

@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { CashboxRequest, Customer } from '../types';
 import { useApi } from '../hooks/useApi';
@@ -24,7 +25,8 @@ const PrintableView: React.FC<PrintableViewProps> = ({ request, printNote }) => 
 
     useEffect(() => {
         if (request.customer_code) {
-            api.getCustomerByCode(request.customer_code).then(customerData => {
+            // FIX: Property 'getCustomerByCode' does not exist on type 'SarrafiApiService'. Did you mean 'getCustomerById'?
+            api.findCustomerByCodeOrName(request.customer_code).then(customerData => {
                 if (customerData) {
                     setCustomer(customerData);
                 }

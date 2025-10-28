@@ -607,10 +607,9 @@ export interface InternalLedgerReportData {
 }
 
 export interface GenerateReportPayload {
-    report_type: ReportType;
+    report_type: string;
     start_date: string;
     end_date: string;
-    currency: Currency;
 }
 
 export enum AmanatStatus {

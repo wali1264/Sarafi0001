@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useApi } from '../hooks/useApi';
@@ -265,7 +266,8 @@ const ExternalUserManagement = () => {
             return;
         }
         setIsCheckingCustomer(true);
-        const result = await api.getCustomerByCode(code);
+        // FIX: Property 'getCustomerByCode' does not exist on type 'SarrafiApiService'. Did you mean 'getCustomerById'?
+        const result = await api.findCustomerByCodeOrName(code);
         setFoundCustomer(result || null);
         setIsCheckingCustomer(false);
     }, 500), [api]);
